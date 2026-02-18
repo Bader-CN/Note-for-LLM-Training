@@ -1,0 +1,56 @@
+{#- System #}
+{%- if messages[0].role == 'system' %}
+    {{- '<|im_start|>' + 'system' + '\n' }}
+    {{- messages[0].content + '<|im_end|>' + '\n' }}
+{%- endif %}
+
+{#- Tools #}
+{% if tools %}
+    {{- '<|im_start|>' + 'tools' + '\n' }}
+    {{- '1.You may call one or more functions to assist with the user query.\n' }}
+    {{- '2.You are provided with function signatures within <tools></tools> XML tags.\n' }}
+    {{- '3.You can call functions in this format: <tool_call>{"name": "<func_name>", "arguments": {"<key1>": "<value1>"}}</tool_call>.\n' }}
+    {{- '4.The tool call result is in <tool_response></tool_response> XML tags and use "---" to separate each result.\n\n' }}
+        {{- '<tools>\n' }}
+        {%- for tool in tools %}
+            {{- tool | tojson + '\n' }}
+        {%- endfor %}
+        {{- '</tools><|im_end|>' + '\n\n' }}
+{%- endif %}
+
+{#- 循环所有消息 #}
+{%- for message in messages %}
+    {#- 设置 content #}
+    {%- if message.content is string %}
+        {%- set content = message.content %}
+    {%- else %}
+        {%- set content = '' %}
+    {%- endif %}
+
+    {#- User / System #}
+    {%- if (message.role == 'user') or (message.role == 'system' and not loop.first) %}
+        {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n\n' }}
+    {#- Assistant #}
+    {%- elif message.role == 'assistant' %}
+        {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n\n' }}
+    {#- Tool Response #}
+   {%- elif message.role == 'tool_response' %}
+        {%- for tool_call in message.content %}
+            {%- if loop.first %}     {#- 首次循环 #}
+                {{- '<|im_start|>' + '<tool_response>' + '\n' }}
+                {{- '---\n' }}
+                {{- 'tool_name: ' + tool_call.name + '\n'}}
+                {{- 'tool_response: ' + tool_call.response + '\n'}}
+                {{- '---\n' }}
+            {%- else %}            {#- 非首次循环 #}
+                {{- 'tool_name: ' + tool_call.name + '\n'}}
+                {{- 'tool_response: ' + tool_call.response + '\n'}}
+                {{- '---\n' }}
+            {%- endif %}
+        {%- endfor %}
+        {{- '</tool_response><|im_end|>' + '\n\n' }}
+    {%- endif %}
+{%- endfor %}
+
+{#- 引导 LLM 回答 #}
+{{- '<|im_start|>' + 'assistant' + '\n' }}
