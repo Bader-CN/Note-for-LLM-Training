@@ -193,6 +193,7 @@ class Attention(torch.nn.Module):
     基于 PyTorch SDPA (scaled_dot_product_attention) 实现的注意力模块
     - 支持 GQA
     - 支持 KV Cache 推理加速
+    - 支持 门控注意力 (https://arxiv.org/abs/2505.06708)
 
     https://huggingface.co/docs/transformers/v5.1.0/zh/main_classes/text_generation#transformers.GenerationConfig.use_cache
     - KV Cache & use_cache 不需要手动创建和指定
@@ -210,8 +211,14 @@ class Attention(torch.nn.Module):
         self.num_kv_heads = config.num_kv_heads                             # GQA Key / Value 头数
         self.dropout = config.dropout                                       # Dropout 的值              
         self.resid_dropout = torch.nn.Dropout(config.dropout)               # 残差 Dropout 层
+        # 门控注意力
+        # https://arxiv.org/abs/2505.06708
+        self.gate_act = torch.nn.Sigmoid()                                             # 门控激活函数
+        self.g_proj = torch.nn.Linear(self.hidden_size, self.hidden_size, bias=True)   # 门控线性层投影
+        torch.nn.init.xavier_uniform_(self.g_proj.weight)                              # xavier 正太分布初始化
+        # torch.nn.init.constant_(self.g_proj.bias, 0.0)                               # 让门控的 bias 初始为 0, 即接近开放状态 (Sigmoid(0) = 0.5)
 
-        # 2.投影层: 将隐藏状态映射到 Query、Key、Value 矩阵
+        # 2.投影层: 将隐藏状态映射到 Query、Key、Value 矩阵 (标准注意力的 4 个投影矩阵)
         # - Q 投影 hidden_size -> n_attn_heads * head_dim
         self.q_proj = torch.nn.Linear(self.hidden_size, self.n_attn_heads * self.head_dim, bias=False)
         # - K 投影 hidden_size -> num_kv_heads * head_dim
@@ -302,6 +309,11 @@ class Attention(torch.nn.Module):
          
         # 5.输出投影
         output = output.transpose(1, 2).reshape(bs, seq_len, -1)                # [bs, seq_len, n_attn_heads * head_dim]
+        # 门控路径: 生成通过比例
+        gate = self.gate_act(self.g_proj(output))
+        # 保留原始信息
+        output = gate * output
+        # 最终输出投影
         output = self.resid_dropout(self.o_proj(output))                        # [bs, seq_len, hidden_size]
 
         return output, past_key_values
